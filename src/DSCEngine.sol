@@ -3,6 +3,9 @@
 pragma solidity ^0.8.18;
 
 import {DecentralizedStableCoin} from "./DecentralizedStableCoin.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 /*
  * @title DSCEngine
@@ -23,12 +26,17 @@ import {DecentralizedStableCoin} from "./DecentralizedStableCoin.sol";
  * for minting and redeeming DSC, as well as depositing and withdrawing collateral.
  * @notice This contract is based on the MakerDAO DSS system
  */
-contract DSCEngine {
+contract DSCEngine is ReentrancyGuard {
     error DSCEngine__MustBeMoreThanZero();
     error DSCEngine__TokenAddressesAndPriceFeedAddressesMustBeSameLength();
     error DSCEngine__TokenNotSupported();
+    error DSCEngine__TransferFailed();
 
     mapping(address token => address priceFeed) private s_priceFeeds;
+    mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
+    mapping(address user => uint256 amountDSCMinted) private s_DSCMinted;
+
+    event CollateralDeposited(address indexed user, address indexed token, uint256 amount);
 
     DecentralizedStableCoin private immutable i_dsc;
 
@@ -58,9 +66,45 @@ contract DSCEngine {
 
     function depositCollateral(address _tokenCollateralAddress, uint256 _amountCollateral)
         external
+        nonReentrant
         moreThanZero(_amountCollateral)
         isAllowedToken(_tokenCollateralAddress)
     {
         // Deposit collateral into the system
+        s_collateralDeposited[msg.sender][_tokenCollateralAddress] += _amountCollateral;
+        emit CollateralDeposited(msg.sender, _tokenCollateralAddress, _amountCollateral);
+
+        //IERC20
+        bool success = IERC20(_tokenCollateralAddress).transferFrom(msg.sender, address(this), _amountCollateral);
+        if (!success) {
+          revert DSCEngine__TransferFailed();
+        }
+    }
+
+    /*
+     * @notice Mint DSC
+     * @param _amountDscToMint The amount of DSC to mint
+     * @notice they must have more collateral than the threshold to mint DSC.
+     */ 
+    function mintDsc(uint256 _amountDscToMint) external moreThanZero(_amountDscToMint)  nonReentrant {
+        // Mint DSC
+        s_DSCMinted[msg.sender] += _amountDscToMint;
+    }
+
+
+
+
+
+    // INTERNAL FUNCTIONS
+
+    function _revertIfHealthFactorIsBroken(address _user) internal {
+
+    }
+
+
+    // PUBLIC VIEW FUNCTIONS
+
+    function getUsdValue(address _token, uint256 _amount) public view returns (uint256) {
+        // Get the USD value of the token
     }
 }
