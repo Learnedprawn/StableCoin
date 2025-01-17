@@ -31,10 +31,21 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__TokenAddressesAndPriceFeedAddressesMustBeSameLength();
     error DSCEngine__TokenNotSupported();
     error DSCEngine__TransferFailed();
+    error DSCEngine__HealthFactorBelowThreshold(uint256 healthFactor);
+    error DSCEngine__MintFailed();
+
+    uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
+    uint256 private constant PRECISION = 1e18;
+    uint256 private constant LIQUIDATION_THRESHOLD = 50;
+    uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant MIN_HEALTH_FACTOR = 1;
+
+
 
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
     mapping(address user => uint256 amountDSCMinted) private s_DSCMinted;
+    address[] private s_collateralTokens;
 
     event CollateralDeposited(address indexed user, address indexed token, uint256 amount);
 
@@ -89,6 +100,10 @@ contract DSCEngine is ReentrancyGuard {
     function mintDsc(uint256 _amountDscToMint) external moreThanZero(_amountDscToMint)  nonReentrant {
         // Mint DSC
         s_DSCMinted[msg.sender] += _amountDscToMint;
+        bool minted = i_dsc.mint(msg.sender, _amountDscToMint);
+        if (!minted) {
+            revert DSCEngine__MintFailed();
+        }
     }
 
 
@@ -97,14 +112,41 @@ contract DSCEngine is ReentrancyGuard {
 
     // INTERNAL FUNCTIONS
 
-    function _revertIfHealthFactorIsBroken(address _user) internal {
+    function _healthFactor(address _user) internal view returns (uint256 healthFactor) {
+        // Calculate the health factor of the user
+        (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(_user);
+        uint256 collateralAdjustedForThreshold = (collateralValueInUsd*LIQUIDATION_THRESHOLD)/LIQUIDATION_PRECISION;
+        return (collateralAdjustedForThreshold*PRECISION)/totalDscMinted;
+    }
+
+    function _revertIfHealthFactorIsBroken(address _user) internal view {
+        uint256 userHealthFactor = _healthFactor(_user);
+        if (userHealthFactor < MIN_HEALTH_FACTOR) {
+            revert DSCEngine__HealthFactorBelowThreshold(userHealthFactor);
+        }
 
     }
 
+    function _getAccountInformation(address user) private view returns (uint256 totalDscMinted, uint256 collateralValueInUsd) {
+        totalDscMinted = s_DSCMinted[user];
+        collateralValueInUsd = getAccountCollateralValueInUsd(user);
+    }
 
     // PUBLIC VIEW FUNCTIONS
 
+    function getAccountCollateralValueInUsd(address _user) public view returns (uint256 totalCollateralValueInUsd) {
+        // Get the value of the collateral in USD
+        for (uint256 i = 0; i < s_collateralTokens.length; i++) {
+            address token = s_collateralTokens[i];
+            uint256 amount = s_collateralDeposited[_user][token];
+            totalCollateralValueInUsd += getUsdValue(token, amount);
+        }
+    }
+
     function getUsdValue(address _token, uint256 _amount) public view returns (uint256) {
         // Get the USD value of the token
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[_token]);
+        (, int256 price, , , ) = priceFeed.latestRoundData();
+        return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * _amount)/PRECISION; 
     }
 }
