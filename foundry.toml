@@ -4,4 +4,10 @@ out = "out"
 libs = ["lib"]
 remappings = ["@openzepplin/contracts=lib/openzepplin/contracts","forge-std/=lib/forge-std/src/", "@chainlink/=lib/chainlink-brownie-contracts/"]
 
+[invariant]
+runs = 128
+depth = 128
+fail_on_revert = false 
+seed = "0x"
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
